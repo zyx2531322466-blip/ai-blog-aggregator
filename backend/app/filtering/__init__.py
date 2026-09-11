@@ -6,18 +6,22 @@
 
 from app.filtering.quality_filter import (
     AD_PATTERNS,
+    ENTRY_PAGE_REASON,
     MIN_CONTENT_LENGTH,
     MIN_LINK_TEXT_RATIO,
     QualityDecision,
     evaluate_quality,
+    is_entry_page,
     link_text_ratio,
 )
 
 __all__ = [
     "AD_PATTERNS",
+    "ENTRY_PAGE_REASON",
     "MIN_CONTENT_LENGTH",
     "MIN_LINK_TEXT_RATIO",
     "QualityDecision",
     "evaluate_quality",
+    "is_entry_page",
     "link_text_ratio",
 ]

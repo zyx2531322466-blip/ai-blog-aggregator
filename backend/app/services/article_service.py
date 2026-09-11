@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.enums import ArticleStatus, CrawlStatus
 from app.db.models import Article, CrawlPage, Source
-from app.filtering import evaluate_quality
+from app.filtering import ENTRY_PAGE_REASON, evaluate_quality, is_entry_page
 from app.parser.html_parser import ParseError, ParsedArticle, parse_html
 
 Parser = Callable[[str, str], ParsedArticle]
@@ -58,6 +58,20 @@ def parse_crawl_page(
     article.source_id = page.source_id
     article.crawled_at = page.fetched_at
 
+    # 来源入口页（首页/栏目页）只用于发现文章链接，无论能否解析都不作为文章；
+    # 先判 URL 再解析，避免"解析失败的首页"以 URL 为标题出现在公开列表里。
+    source = _source_config(session, page.source_id)
+    if source is not None and is_entry_page(page.url, source.site_url):
+        article.status = ArticleStatus.FILTERED
+        session.commit()
+        session.refresh(article)
+        return ParseOutcome(
+            article=article,
+            parsed=False,
+            filtered=True,
+            filter_reason=ENTRY_PAGE_REASON,
+        )
+
     if not page.raw_html:
         article.status = ArticleStatus.ERROR
         session.commit()
@@ -82,7 +96,9 @@ def parse_crawl_page(
         title=parsed.title,
         content=parsed.content,
         raw_html=page.raw_html,
-        exclude_keywords=_exclude_keywords(session, page.source_id),
+        exclude_keywords=source.exclude_keywords if source is not None else [],
+        page_url=page.url,
+        source_site_url=source.site_url if source is not None else None,
     )
     if decision.filtered:
         article.status = ArticleStatus.FILTERED
@@ -112,10 +128,9 @@ def parse_crawl_pages(session: Session, *, source_id: str | None = None) -> list
     return [parse_crawl_page(session, page) for page in session.scalars(statement)]
 
 
-def _exclude_keywords(session: Session, source_id: str | None) -> list[str]:
+def _source_config(session: Session, source_id: str | None) -> Source | None:
+    """读取来源配置（用于排除词与入口页判定）。"""
+
     if not source_id:
-        return []
-    source = session.get(Source, source_id)
-    if source is None or not source.exclude_keywords:
-        return []
-    return list(source.exclude_keywords)
+        return None
+    return session.get(Source, source_id)

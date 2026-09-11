@@ -4,7 +4,8 @@
 - 依据白名单发起抓取，黑名单站点直接跳过；
 - 遵守 robots.txt 与按主机限流；
 - 保存原始 HTML 与元信息（原始来源地址、HTTP 状态、抓取时间、失败原因）；
-- 单个 URL 抓取失败不影响整体流程（失败被记录而非抛出）。
+- 单个 URL 抓取失败不影响整体流程（失败被记录而非抛出）；
+- 页面写入按 (source_id, url) 幂等，且对并发抓取（定时任务重叠）安全。
 """
 
 from collections.abc import Callable, Iterable
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.crawler.discovery import discover_article_urls
@@ -164,21 +166,70 @@ def _upsert_page(
     error_message: str | None = None,
     fetched_at: datetime,
 ) -> CrawlPage:
-    """按 (source_id, url) 幂等写入，重复抓取不会产生脏数据。"""
+    """按 (source_id, url) 幂等写入，重复抓取不会产生脏数据。
 
-    page = session.scalars(
-        select(CrawlPage).where(CrawlPage.source_id == source.id, CrawlPage.url == url)
-    ).first()
+    "先查后插"在并发场景下存在竞态（例如两次定时任务重叠执行），
+    因此插入放在 SAVEPOINT 中：一旦撞上唯一约束，就回滚该次插入并改为更新已存在的行。
+    """
+
+    page = _find_page(session, source.id, url)
     if page is None:
         page = CrawlPage(source_id=source.id, url=url)
-        session.add(page)
+        _assign_page_fields(
+            page,
+            status=status,
+            raw_html=raw_html,
+            http_status=http_status,
+            error_message=error_message,
+            fetched_at=fetched_at,
+        )
+        try:
+            with session.begin_nested():
+                session.add(page)
+                session.flush()
+            return page
+        except IntegrityError:
+            # 并发进程已插入同一行：回滚本次插入，改为更新那一行
+            page = _find_page(session, source.id, url)
+            if page is None:  # pragma: no cover - 仅在并发删除等极端情况下出现
+                raise
+
+    _assign_page_fields(
+        page,
+        status=status,
+        raw_html=raw_html,
+        http_status=http_status,
+        error_message=error_message,
+        fetched_at=fetched_at,
+    )
+    session.flush()
+    return page
+
+
+def _assign_page_fields(
+    page: CrawlPage,
+    *,
+    status: CrawlStatus,
+    raw_html: str | None,
+    http_status: int | None,
+    error_message: str | None,
+    fetched_at: datetime,
+) -> None:
+    """把本次抓取结果写入页面记录。"""
+
     page.status = status
     page.raw_html = raw_html
     page.http_status = http_status
     page.error_message = error_message
     page.fetched_at = fetched_at
-    session.flush()
-    return page
+
+
+def _find_page(session: Session, source_id: str, url: str) -> CrawlPage | None:
+    """按 (source_id, url) 查找已存在的抓取页面。"""
+
+    return session.scalars(
+        select(CrawlPage).where(CrawlPage.source_id == source_id, CrawlPage.url == url)
+    ).first()
 
 
 def _finalize(

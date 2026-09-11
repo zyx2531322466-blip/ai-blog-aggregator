@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.crawler.discovery import discover_article_urls
@@ -233,6 +233,58 @@ def test_discover_article_urls_filters_and_deduplicates() -> None:
     )
 
 
+ARTICLES_FIRST_INDEX = """
+<html><body>
+  <nav>
+    <a href="/about">关于</a>
+    <a href="/guestbook">留言板</a>
+    <a href="/plugins">插件</a>
+    <a href="/tags/ai">标签</a>
+  </nav>
+  <main>
+    <a href="/articles/12345.html">如何理解分布式一致性</a>
+    <a href="/2024/05/half-year-review.html">2024 年上半年总结</a>
+  </main>
+</body></html>
+"""
+
+
+def test_discovery_ranks_article_urls_before_navigation_pages() -> None:
+    urls = discover_article_urls(ARTICLES_FIRST_INDEX, INDEX_URL, limit=2)
+
+    assert urls == [
+        "https://blog.example.com/articles/12345.html",
+        "https://blog.example.com/2024/05/half-year-review.html",
+    ]
+
+
+def test_discovery_keeps_document_order_when_ranking_disabled() -> None:
+    ranked = discover_article_urls(ARTICLES_FIRST_INDEX, INDEX_URL)
+    plain = discover_article_urls(ARTICLES_FIRST_INDEX, INDEX_URL, prefer_articles=False)
+
+    assert set(ranked) == set(plain)
+    assert plain[0] == ABOUT  # 关闭排序时保持文档顺序（旧行为）
+    assert ranked[0].endswith("/articles/12345.html")
+
+
+def test_crawl_source_prefers_articles_over_nav_pages(db_session: Session) -> None:
+    article_a = "https://blog.example.com/articles/12345.html"
+    article_b = "https://blog.example.com/2024/05/half-year-review.html"
+    source = make_source(db_session)
+    fetcher = StaticFetcher(
+        {
+            INDEX_URL: ARTICLES_FIRST_INDEX,
+            article_a: load_fixture("blog_post_1.html"),
+            article_b: load_fixture("blog_post_2.html"),
+        }
+    )
+
+    report = crawl_source(db_session, source, fetcher=fetcher, max_pages=2, now=lambda: FIXED_NOW)
+
+    assert report.fetched == 3  # 首页 + 两篇文章
+    assert fetcher.calls == [INDEX_URL, article_a, article_b]
+
+
 def test_robot_file_policy_respects_rules() -> None:
     robots_txt = "User-agent: *\nDisallow: /private\n"
     fetcher = StaticFetcher({"https://blog.example.com/robots.txt": robots_txt})
@@ -266,3 +318,44 @@ def test_httpx_fetcher_success_and_failure() -> None:
         network_error = fetcher.fetch("https://example.com/boom")
         assert network_error.ok is False
         assert network_error.error is not None
+
+
+def test_upsert_page_is_safe_against_concurrent_insert(db_session: Session, monkeypatch) -> None:
+    """两次抓取并发写同一 URL 时，不应抛唯一约束冲突（改为更新已存在的行）。"""
+
+    import app.crawler.service as service
+
+    source = make_source(db_session)
+    existing = CrawlPage(
+        source_id=source.id, url=POST_1, status=CrawlStatus.FETCHED, fetched_at=FIXED_NOW
+    )
+    db_session.add(existing)
+    db_session.commit()
+
+    calls = {"count": 0}
+    real_find = service._find_page
+
+    def flaky_find(session, source_id, url):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None  # 模拟"查询时还看不到并发进程刚写入的行"
+        return real_find(session, source_id, url)
+
+    monkeypatch.setattr(service, "_find_page", flaky_find)
+
+    page = service._upsert_page(
+        db_session,
+        source,
+        POST_1,
+        status=CrawlStatus.FAILED,
+        http_status=500,
+        error_message="HTTP 500",
+        fetched_at=FIXED_NOW,
+    )
+    db_session.commit()
+
+    assert calls["count"] >= 2  # 触发过一次插入失败后的重新查询
+    assert page.id == existing.id  # 复用了已存在的行，而不是插入新行
+    assert db_session.scalar(select(func.count()).select_from(CrawlPage)) == 1
+    assert page.status is CrawlStatus.FAILED
+    assert page.http_status == 500

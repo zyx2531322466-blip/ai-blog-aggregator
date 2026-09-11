@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.enums import ArticleStatus, CrawlStatus, SourceListType
 from app.db.models import Article, CrawlPage, Source
-from app.filtering import evaluate_quality, link_text_ratio
+from app.filtering import evaluate_quality, is_entry_page, link_text_ratio
 from app.services import classifier_service
 from app.services.article_service import parse_crawl_page, parse_crawl_pages
 from tests.fakes import load_fixture
@@ -67,6 +67,44 @@ def test_exclude_keyword_hit_is_filtered() -> None:
     )
     assert decision.filtered is True
     assert "排除词" in (decision.reason or "")
+
+
+def test_is_entry_page_ignores_scheme_and_trailing_slash() -> None:
+    assert is_entry_page("https://blog.example.com/", "https://blog.example.com") is True
+    assert is_entry_page("http://blog.example.com/", "https://blog.example.com/") is True
+    assert is_entry_page("https://blog.example.com/posts/1", "https://blog.example.com/") is False
+    assert is_entry_page("https://other.example.com/", "https://blog.example.com/") is False
+    assert is_entry_page("", "https://blog.example.com/") is False
+
+
+def test_source_entry_page_is_not_stored_as_article(db_session: Session) -> None:
+    """站点首页（入口页）只用于发现文章链接，本身不应进入正式文章表。"""
+
+    source = make_source(db_session)
+    homepage = (
+        "<html><head><title>示例博客</title></head><body><article><h1>示例博客</h1>"
+        "<p>这是站点首页的长正文，用于验证入口页不会被当作文章入库。</p>"
+        "</article></body></html>"
+    )
+    page = make_page(db_session, source, "https://blog.example.com/", homepage)
+
+    outcome = parse_crawl_page(db_session, page)
+
+    assert outcome.filtered is True
+    assert outcome.article.status is ArticleStatus.FILTERED
+    assert "入口页" in (outcome.filter_reason or "")
+
+
+def test_article_subpage_is_not_treated_as_entry_page(db_session: Session) -> None:
+    source = make_source(db_session)
+    page = make_page(
+        db_session, source, "https://blog.example.com/posts/1", load_fixture("blog_post_1.html")
+    )
+
+    outcome = parse_crawl_page(db_session, page)
+
+    assert outcome.filtered is False
+    assert outcome.article.status is ArticleStatus.PENDING
 
 
 def test_high_link_density_is_filtered() -> None:
@@ -175,3 +213,54 @@ def test_filtered_articles_are_not_listed(client: TestClient, api_session: Sessi
     listing = client.get("/api/v1/articles").json()
     assert listing["total"] == 1
     assert listing["items"][0]["title"] == "机器学习入门"
+
+
+def test_unparseable_entry_page_is_filtered_not_error(db_session: Session) -> None:
+    """入口页即使无法解析（内容过短/无 HTML），也应标记为 filtered 而不是 error。"""
+
+    source = make_source(db_session)
+    page = make_page(
+        db_session, source, "https://blog.example.com/", "<html><body><p>短</p></body></html>"
+    )
+
+    outcome = parse_crawl_page(db_session, page)
+    assert outcome.filtered is True
+    assert outcome.article.status is ArticleStatus.FILTERED
+    assert "入口页" in (outcome.filter_reason or "")
+
+    # 同一入口页没有原始 HTML 时同样应被过滤，而不是变成 error
+    page.raw_html = ""
+    db_session.commit()
+    outcome = parse_crawl_page(db_session, page)
+    assert outcome.filtered is True
+    assert outcome.article.status is ArticleStatus.FILTERED
+
+
+def test_parse_error_articles_are_not_listed(client: TestClient, api_session: Session) -> None:
+    """解析失败（error）的记录保留在库中，但不出现在公开列表里。"""
+
+    source = make_source(api_session)
+    api_session.add_all(
+        [
+            Article(
+                title="https://blog.example.com/broken",
+                content="",
+                url="https://blog.example.com/broken",
+                source_id=source.id,
+                status=ArticleStatus.ERROR,
+            ),
+            Article(
+                title="正常文章",
+                content="正文内容",
+                url="https://blog.example.com/ok",
+                source_id=source.id,
+                status=ArticleStatus.NORMAL,
+            ),
+        ]
+    )
+    api_session.commit()
+
+    listing = client.get("/api/v1/articles").json()
+
+    assert listing["total"] == 1
+    assert listing["items"][0]["title"] == "正常文章"

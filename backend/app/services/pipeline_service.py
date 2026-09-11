@@ -28,6 +28,7 @@ class PipelineReport:
     classified: int = 0
     merged: int = 0
     related: int = 0
+    error: str | None = None
 
 
 def process_source(

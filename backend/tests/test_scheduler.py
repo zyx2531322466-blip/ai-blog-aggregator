@@ -224,3 +224,32 @@ def test_frequency_tiers_endpoint(client: TestClient, admin_headers: dict[str, s
 
 def test_frequency_tiers_requires_authorization(client: TestClient) -> None:
     assert client.get(TIERS_URL).status_code == 401
+
+
+def test_run_due_sources_isolates_source_failures(db_session: Session, monkeypatch) -> None:
+    """单个来源抛异常时，其余来源仍应继续处理（例如站点持续超时、并发冲突）。"""
+
+    bad = make_source(db_session, site_url="https://bad.example")
+    good = make_source(db_session, site_url="https://good.example")
+    db_session.commit()
+
+    from app.services.pipeline_service import process_source as real_process_source
+
+    def flaky_process_source(session, source, **kwargs):
+        if source.site_url.startswith("https://bad"):
+            raise RuntimeError("boom")
+        return real_process_source(session, source, **kwargs)
+
+    monkeypatch.setattr(scheduler_service, "process_source", flaky_process_source)
+
+    reports = scheduler_service.run_due_sources(
+        db_session,
+        fetcher_factory=lambda source: StaticFetcher({}),
+        now_factory=lambda: FIXED_NOW,
+    )
+
+    by_source = {report.source_id: report for report in reports}
+    assert len(reports) == 2
+    assert by_source[bad.id].error == "boom"
+    assert by_source[bad.id].crawl.skipped is True
+    assert by_source[good.id].error is None

@@ -1,11 +1,14 @@
 """内容质量过滤实现（T16）。"""
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 MIN_CONTENT_LENGTH = 10
 MIN_LINK_TEXT_RATIO = 0.5
+# 来源入口页（首页/栏目页）的过滤原因：解析前后共用同一文案
+ENTRY_PAGE_REASON = "来源入口页（首页/栏目页），不作为文章"
 
 # 典型广告/营销用语：命中多个即判为广告页
 AD_PATTERNS = (
@@ -30,17 +33,47 @@ class QualityDecision:
     reason: str | None = None
 
 
+def is_entry_page(url: str, site_url: str) -> bool:
+    """判断 URL 是否为来源的入口页（站点首页/栏目根路径）。
+
+    入口页用于发现文章链接，本身是栏目页而非文章，因此不应进入正式文章表。
+    比较时忽略协议、查询串与末尾斜杠（``https://a.example`` 与 ``https://a.example/`` 视为同一页）。
+    """
+
+    if not url or not site_url:
+        return False
+    try:
+        page = urlparse(url)
+        site = urlparse(site_url)
+    except ValueError:  # pragma: no cover - urlparse 极少抛错
+        return False
+    if page.netloc.lower() != site.netloc.lower():
+        return False
+    return _normalized_path(page.path) == _normalized_path(site.path)
+
+
+def _normalized_path(path: str | None) -> str:
+    cleaned = (path or "/").rstrip("/")
+    return cleaned or "/"
+
+
 def evaluate_quality(
     *,
     title: str,
     content: str,
     raw_html: str | None = None,
     exclude_keywords: tuple[str, ...] | list[str] = (),
+    page_url: str | None = None,
+    source_site_url: str | None = None,
 ) -> QualityDecision:
     """判断内容是否属于低质量/不相关内容。"""
 
     cleaned = (content or "").strip()
     haystack = f"{title or ''}\n{cleaned}".lower()
+
+    # 0) 来源入口页（首页/栏目页）不作为文章
+    if page_url and source_site_url and is_entry_page(page_url, source_site_url):
+        return QualityDecision(True, ENTRY_PAGE_REASON)
 
     if len(cleaned) < MIN_CONTENT_LENGTH:
         return QualityDecision(True, "内容过短，疑似非文章页")

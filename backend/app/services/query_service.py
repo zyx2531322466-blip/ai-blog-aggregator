@@ -40,9 +40,15 @@ class ArticleFilters:
 
 
 def list_articles(session: Session, filters: ArticleFilters) -> tuple[int, list[Article]]:
-    """按筛选条件分页查询文章（不含已过滤内容与被合并的重复记录）。"""
+    """按筛选条件分页查询文章。
 
-    statement = select(Article).where(Article.status != ArticleStatus.FILTERED)
+    公开列表只呈现"可展示"的内容：排除已过滤（低质量/入口页）与解析失败（error）的记录，
+    以及被合并的重复记录（只展示主记录）。
+    """
+
+    statement = select(Article).where(
+        Article.status.notin_((ArticleStatus.FILTERED, ArticleStatus.ERROR))
+    )
 
     merged_member_ids = select(DuplicateRelation.article_id).where(
         DuplicateRelation.is_primary.is_(False),

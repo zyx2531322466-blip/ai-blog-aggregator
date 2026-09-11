@@ -168,3 +168,42 @@ def test_summarize_truncates_long_content() -> None:
     long_summary = summarize("字" * 500, limit=10)
     assert long_summary.endswith("…")
     assert len(long_summary) == 11
+
+
+def test_title_prefers_article_part_when_h1_is_site_name() -> None:
+    """站点把 <h1> 当站名、把文章标题放在 <title> 的"站名: 标题"时，取冒号后的标题。"""
+
+    html = (
+        "<html><head><title>云风的 BLOG: 暑假的英语补习</title></head><body>"
+        "<h1>云风的 BLOG</h1><p>这是一篇讲英语补习的长正文内容，用于验证标题提取。</p>"
+        "</body></html>"
+    )
+
+    parsed = parse_html(html, "https://blog.codingnow.com/2026/09/summer.html")
+
+    assert parsed.title == "暑假的英语补习"
+
+
+def test_title_keeps_h1_when_title_uses_dash_convention() -> None:
+    """常见的"文章标题 - 站点名"写法不受影响（仍取 <h1>）。"""
+
+    html = (
+        "<html><head><title>机器学习入门 - 示例博客</title></head><body>"
+        "<h1>机器学习入门</h1><p>这是一段足够长的正文内容，用于验证标题提取逻辑。</p>"
+        "</body></html>"
+    )
+
+    parsed = parse_html(html, "https://blog.example.com/posts/1")
+
+    assert parsed.title == "机器学习入门"
+
+
+def test_title_falls_back_to_page_title_without_h1() -> None:
+    html = (
+        "<html><head><title>只有页面标题的文章</title></head><body>"
+        "<p>这是一段足够长的正文内容，用于验证无 h1 时的标题回退。</p></body></html>"
+    )
+
+    parsed = parse_html(html, "https://blog.example.com/posts/2")
+
+    assert parsed.title == "只有页面标题的文章"

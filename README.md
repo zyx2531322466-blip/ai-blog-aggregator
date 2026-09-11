@@ -38,7 +38,7 @@
 | 领域 | 能力 |
 | --- | --- |
 | 来源管理 | 主题/关注领域配置，来源黑/白名单，权重与更新频率（高频 3h / 普通 24h / 低频 7d / 自定义） |
-| 采集 | 遵守 `robots.txt`、礼貌限速、同域文章发现、原始 HTML 留存、失败不中断批次 |
+| 采集 | 遵守 `robots.txt`、礼貌限速、按“文章特征”加权的同域文章发现、原始 HTML 留存、失败不中断批次、并发抓取安全 |
 | 解析 | 标题/正文/发布时间/作者抽取，支持 Open Graph、`<article>`、JSON-LD 等多种页面结构 |
 | 质量控制 | 排除词命中、广告话术、导航/聚合页（链接密度）、内容过短等低质内容过滤 |
 | 分类与标签 | 受控类别体系 + 关键词权重打分，多标签，无法归类的落入"其他"并标记为未分类 |
@@ -103,6 +103,7 @@ flowchart LR
 │   │   ├── filtering/          # 低质量/不相关内容过滤
 │   │   ├── parser/             # HTML 正文与元信息解析
 │   │   ├── scheduler/          # 更新频率档位与到期判定
+│   │   ├── scripts/            # 种子数据脚本（热门博客来源）
 │   │   ├── schemas/            # Pydantic 请求/响应模型
 │   │   └── services/           # 业务编排（文章/类别/来源/去重/概览/调度/流水线）
 │   ├── alembic/                # 数据库迁移
@@ -116,6 +117,8 @@ flowchart LR
 │   │   └── pages/              # 列表页、详情页、维护者概览页
 │   ├── nginx.conf              # 生产静态资源 + /api 反向代理
 │   └── Dockerfile
+├── docs/
+│   └── sharing-guide.md        # 让其他人访问站点（局域网/临时公网/长期部署）
 ├── infra/
 │   ├── docker-compose.yml      # db(PostgreSQL) + redis + api + web
 │   └── .env.example
@@ -134,7 +137,7 @@ flowchart LR
 
 | 系统 | 支持状态 | 验证方式 | 说明 |
 | --- | --- | --- | --- |
-| **Windows 10 / 11** | ✅ 已支持（已验证） | 本仓库开发环境为 Windows 11，后端 189 个测试、black/flake8、前端 lint/build/test 均在本机通过 | PowerShell 7、Git Bash、WSL2 三种终端均可；容器方式需 Docker Desktop |
+| **Windows 10 / 11** | ✅ 已支持（已验证） | 本仓库开发环境为 Windows 11，后端 207 个测试、black/flake8、前端 lint/build/test 均在本机通过 | PowerShell 7、Git Bash、WSL2 三种终端均可；容器方式需 Docker Desktop |
 | **Linux（x86_64）** | ✅ 已支持（已验证） | CI 每次 push 在 `ubuntu-latest` 上执行全部质量门（后端测试 + 覆盖率、前端 lint/build/test、compose 校验） | 建议 Python 3.10+；容器方式需 Docker Engine + `docker compose` 插件 |
 | **macOS（Intel / Apple Silicon）** | ⚠️ 预期可用，**未验证** | 未纳入 CI，无实测记录 | 代码无平台相关分支（不使用 `fcntl` / `os.name` / `subprocess` 等），依赖无平台条件标记，理论上可直接运行；若遇到问题欢迎提 issue |
 | 其他系统（FreeBSD、32 位平台等） | ❌ 不支持 | — | 未验证，也未提供安装说明 |
@@ -154,6 +157,12 @@ flowchart LR
 ---
 
 ## 快速开始
+
+> 想把自己搭好的站点**分享给别人**（同一局域网 / 临时公网链接 / 长期公网部署）？
+> 见独立手册 **[让其他人访问你的站点](docs/sharing-guide.md)**。
+>
+> 想让站点立刻**有内容可看**（写入 12 个热门技术博客并抓取一次）：
+> `docker compose -f infra/docker-compose.yml exec api python -m app.scripts.seed_sources`
 
 ### 方式一：Docker Compose（Windows / Linux / macOS 通用）
 
@@ -540,6 +549,7 @@ schtasks /Create /SC MINUTE /MO 30 /TN "BlogAggregatorCrawl" /TR "C:\path\to\run
 
 按顺序判定，命中即标记为 `filtered`（保留原始记录用于审计，但所有面向用户的查询都会排除）：
 
+0. **来源入口页**（URL 等于来源的 `site_url`，即站点首页/栏目页）—— 入口页只用于发现文章链接，不作为文章；
 1. 正文过短（< 10 字符，疑似非文章页）；
 2. 命中来源配置的**排除词**；
 3. 标题含"首页/导航/目录/404"等占位特征且正文偏短；
@@ -628,7 +638,7 @@ cd frontend && npm run lint && npm run format:check && npm run build && npm test
 
 当前状态：
 
-- 后端 **189** 个测试全部通过，`app` 覆盖率 **≈95%**（`pytest --cov-fail-under=85`）；
+- 后端 **207** 个测试全部通过，`app` 覆盖率 **≈95%**（`pytest --cov-fail-under=85`）；
 - 前端 **19** 个测试全部通过，eslint / prettier / `tsc --noEmit` 均无告警；
 - 爬虫与解析测试全部使用 `backend/tests/fixtures/*.html` 录制样本，**不访问真实网络**；
 - `tests/test_e2e.py` 覆盖七类端到端场景：正常采集展示、完全重复合并、近重复合并、不同视角关联、
@@ -742,6 +752,10 @@ flowchart LR
 | 主记录切换后旧主记录被丢出合并组 | 成员集合改为取"全部关系行"的 `article_id`，而非仅非主记录行 |
 | "权重优先"与"主记录失效要能切换"冲突 | 只要组内存在可访问成员就**先限定候选集合**，再按权重等优先级评选 |
 | 端到端列表多出一条文章 | 索引页正文过短被判为解析错误而进入列表，改为构造可被质量过滤拦下的导航页 |
+| 真实抓取时 `crawl_pages` 报唯一约束冲突 | 定时任务重叠执行时"先查后插"存在竞态；改为把插入放进 SAVEPOINT，撞唯一约束则回滚并更新已有行 |
+| 一个站点失败导致整轮调度中断 | `run_due_sources` 未隔离单来源异常；现改为回滚并把原因记录到 `PipelineReport.error`，其余来源继续 |
+| 某博客所有文章标题都成了站名 | 该站 `<h1>` 写的是站名、文章标题在 `<title>` 的"站名: 标题"里；补充冒号分隔的标题提纯规则（不影响"标题 - 站名"写法） |
+| 公开列表出现以 URL 为标题的条目 | 解析失败（error）记录与"无法解析的入口页"会漏进列表；改为入口页在解析前即判定，且公开列表排除 error |
 
 ### 4. 关键工程决策
 
@@ -753,12 +767,14 @@ flowchart LR
 - **跨数据库一致**：SimHash 以有符号 64 位存储以兼容 PostgreSQL `BIGINT`；Alembic 开启 `render_as_batch`
   以支持 SQLite 的批式迁移；测试用内存库 + `StaticPool`。
 - **ID 可读**：主键采用带前缀的字符串（`article_…`），便于日志排查与跨环境迁移。
+- **可复现的"有内容"路径**：把 12 个热门技术博客做成种子脚本（`python -m app.scripts.seed_sources`）；
+  候选站点逐条核对 `robots.txt` 与首页文章发现效果（403、TLS 异常、只能发现栏目页的站点被排除）。
 
 ### 5. 质量结果与分工
 
 | 维度 | 结果 |
 | --- | --- |
-| 后端测试 | 189 个用例通过，`app` 覆盖率 ≈95%（CI 门槛 85%） |
+| 后端测试 | 207 个用例通过，`app` 覆盖率 ≈95%（CI 门槛 85%） |
 | 前端测试 | 19 个用例通过，eslint / prettier / `tsc` 无告警 |
 | 端到端 | `tests/test_e2e.py` 覆盖 7 类场景 + 用户故事核心路径 |
 | CI | Backend / Frontend / Infra 三作业，push 与 PR 均自动执行 |
@@ -786,6 +802,7 @@ flowchart LR
 | [`plan.md`](plan.md) | 技术方案与架构决策 |
 | [`tasks.md`](tasks.md) | 任务拆解与优先级 |
 | [`tickets.md`](tickets.md) | **T01–T21** 逐票实现说明（依赖顺序、验收标准、边界） |
+| [`docs/sharing-guide.md`](docs/sharing-guide.md) | **让其他人访问站点**：局域网 / 临时公网隧道 / 长期部署，含三系统命令与检查清单 |
 
 ---
 

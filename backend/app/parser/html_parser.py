@@ -85,13 +85,37 @@ def _extract_title(soup: BeautifulSoup) -> str | None:
         if value:
             return value
 
+    page_title = soup.title.get_text(strip=True) if soup.title is not None else ""
+
     heading = soup.find("h1")
     if heading is not None and heading.get_text(strip=True):
-        return heading.get_text(strip=True)
+        heading_text = heading.get_text(strip=True)
+        # 站点把 <h1> 写成站名、把文章标题放在 <title> 的"站名: 标题"里时，取冒号后的部分
+        return _article_title_from_page_title(heading_text, page_title) or heading_text
 
-    if soup.title is not None and soup.title.get_text(strip=True):
-        return soup.title.get_text(strip=True)
-    return None
+    return page_title or None
+
+
+def _article_title_from_page_title(heading: str, page_title: str) -> str | None:
+    """当 <h1> 是 <title> 的前缀且以冒号分隔时，返回 <title> 中更具体的部分。
+
+    典型场景（站点"站名: 文章标题"）::
+
+        <title>云风的 BLOG: 暑假的英语补习</title>
+        <h1>云风的 BLOG</h1>          → 文章标题应为「暑假的英语补习」
+
+    仅处理冒号分隔，避免误伤常见的"文章标题 - 站点名"写法。
+    """
+
+    if not heading or not page_title or heading == page_title:
+        return None
+    if not page_title.startswith(heading):
+        return None
+    remainder = page_title[len(heading) :].lstrip()
+    if not remainder or remainder[0] not in (":", "："):
+        return None
+    article_title = remainder[1:].strip()
+    return article_title or None
 
 
 def _extract_content(soup: BeautifulSoup) -> str:

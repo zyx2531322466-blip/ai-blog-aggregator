@@ -17,6 +17,7 @@ from app.crawler.robots import RobotFilePolicy
 from app.db.base import utcnow
 from app.db.enums import SourceListType
 from app.db.models import Source
+from app.crawler.service import CrawlReport
 from app.scheduler.frequency import is_due
 from app.services.pipeline_service import PipelineReport, process_source
 
@@ -41,7 +42,11 @@ def run_due_sources(
     robots: object | None = None,
     rate_limiter: RateLimiter | None = None,
 ) -> list[PipelineReport]:
-    """对所有到期来源执行一次流水线。"""
+    """对所有到期来源执行一次流水线。
+
+    单个来源失败不会中断整轮调度：异常会被回滚并记录到该来源的 ``PipelineReport.error``，
+    其余来源继续处理（例如某个站点持续超时、或并发抓取触发唯一约束冲突）。
+    """
 
     clock = now_factory or utcnow
     reports: list[PipelineReport] = []
@@ -57,6 +62,19 @@ def run_due_sources(
                     robots=robots,
                     rate_limiter=rate_limiter,
                     now=now,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - 单站点失败不应影响整体调度
+            session.rollback()
+            reports.append(
+                PipelineReport(
+                    source_id=source.id,
+                    crawl=CrawlReport(
+                        source_id=source.id,
+                        skipped=True,
+                        skip_reason=f"error: {exc}",
+                    ),
+                    error=str(exc),
                 )
             )
         finally:
