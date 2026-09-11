@@ -791,6 +791,10 @@ flowchart LR
 - 平台验证不完整：Windows（本机）与 Linux（CI）已验证，**macOS 未纳入 CI**，尚未实测；
 - 可观测性（Prometheus/Grafana 指标、抓取成功率告警）与部署运维文档仍待补充。
 
+> 📄 本章是概览；完整流程（人机分工、阶段门禁、Definition of Done、偏差管理、可复用实践清单）见
+> **[docs/ai-development-process.md](docs/ai-development-process.md)**；
+> 逐票对照与偏差登记见 **[docs/convergence-report.md](docs/convergence-report.md)**。
+
 ---
 
 ## 项目文档
@@ -803,6 +807,8 @@ flowchart LR
 | [`tasks.md`](tasks.md) | 任务拆解与优先级 |
 | [`tickets.md`](tickets.md) | **T01–T21** 逐票实现说明（依赖顺序、验收标准、边界） |
 | [`docs/sharing-guide.md`](docs/sharing-guide.md) | **让其他人访问站点**：局域网 / 临时公网隧道 / 长期部署，含三系统命令与检查清单 |
+| [`docs/ai-development-process.md`](docs/ai-development-process.md) | **AI 协作开发流程**：人机分工、制品链、阶段门禁、Definition of Done、偏差管理、可复用实践清单 |
+| [`docs/convergence-report.md`](docs/convergence-report.md) | **收敛报告**：T01–T21 逐票对照、用户故事 1–9 覆盖矩阵、质量度量、11 项偏差登记与关闭、未收敛项 |
 
 ---
 
