@@ -16,6 +16,7 @@
 - [核心能力](#核心能力)
 - [技术栈](#技术栈)
 - [系统流程](#系统流程)
+- [支持的系统](#支持的系统)
 - [目录结构](#目录结构)
 - [快速开始](#快速开始)
 - [环境变量](#环境变量)
@@ -129,16 +130,51 @@ flowchart LR
 
 ---
 
+## 支持的系统
+
+| 系统 | 支持状态 | 验证方式 | 说明 |
+| --- | --- | --- | --- |
+| **Windows 10 / 11** | ✅ 已支持（已验证） | 本仓库开发环境为 Windows 11，后端 189 个测试、black/flake8、前端 lint/build/test 均在本机通过 | PowerShell 7、Git Bash、WSL2 三种终端均可；容器方式需 Docker Desktop |
+| **Linux（x86_64）** | ✅ 已支持（已验证） | CI 每次 push 在 `ubuntu-latest` 上执行全部质量门（后端测试 + 覆盖率、前端 lint/build/test、compose 校验） | 建议 Python 3.10+；容器方式需 Docker Engine + `docker compose` 插件 |
+| **macOS（Intel / Apple Silicon）** | ⚠️ 预期可用，**未验证** | 未纳入 CI，无实测记录 | 代码无平台相关分支（不使用 `fcntl` / `os.name` / `subprocess` 等），依赖无平台条件标记，理论上可直接运行；若遇到问题欢迎提 issue |
+| 其他系统（FreeBSD、32 位平台等） | ❌ 不支持 | — | 未验证，也未提供安装说明 |
+
+> **结论**：正式支持的平台是 **Windows 与 Linux**（均为已验证）；**macOS 预期可用但未经官方验证**；其余系统不支持。
+
+补充说明：
+
+- 后端为纯 Python 3.10 实现，未使用任何平台相关 API；数据库默认 SQLite（跨平台），容器方案使用 PostgreSQL 16；
+- 前端是浏览器应用，本身与操作系统无关，差异只出现在**命令行操作**上（见下文各系统的命令）；
+- 可用以下命令自行复核平台无关性：
+
+  ```bash
+  grep -rInE "fcntl|sys\.platform|os\.name|platform\.system|multiprocessing|subprocess" backend/app   # 预期无输出
+  ```
+
+---
+
 ## 快速开始
 
-### 方式一：Docker Compose（推荐）
+### 方式一：Docker Compose（Windows / Linux / macOS 通用）
+
+> 前置条件：Windows 与 macOS 需安装 **Docker Desktop**；Linux 需 **Docker Engine + `docker compose` 插件**。
+> 该方式下三个系统的启动命令完全一致，只有"复制环境变量文件"这一句的写法不同。
+
+**Linux / macOS / Windows Git Bash / WSL2：**
 
 ```bash
 cp infra/.env.example infra/.env      # 按需修改端口/令牌
 docker compose -f infra/docker-compose.yml up --build
 ```
 
-启动后：
+**Windows PowerShell：**
+
+```powershell
+Copy-Item infra\.env.example infra\.env
+docker compose -f infra/docker-compose.yml up --build
+```
+
+启动后（三系统一致）：
 
 - 前端：<http://localhost:3000>
 - 后端 API：<http://localhost:8000>，交互式文档 <http://localhost:8000/docs>
@@ -148,18 +184,64 @@ docker compose -f infra/docker-compose.yml up --build
 
 ### 方式二：本地开发
 
-**后端（默认 SQLite，无需外部数据库）**
+三系统都需要：**Python 3.10+**、**Node.js ≥ 20（推荐 22 LTS）**。后端默认使用 SQLite，无需额外安装数据库。
+
+#### Windows
+
+推荐使用 **PowerShell 7** 或 **Git Bash**；WSL2 中按 Linux 章节操作。
+
+```powershell
+# 1) 后端（PowerShell）
+cd backend
+py -3.10 -m venv .venv                       # 若无 py 启动器，改用 python -m venv .venv
+.\.venv\Scripts\Activate.ps1                 # 若提示禁止运行脚本：
+                                             # Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+python -m pip install -r requirements-dev.txt
+New-Item -ItemType Directory -Force data | Out-Null   # SQLite 文件目录，必需
+python -m alembic upgrade head                # 初始化表结构
+"APP_ADMIN_TOKEN=dev-token" | Set-Content -Encoding utf8 .env   # 也可手写 backend\.env
+python -m uvicorn app.main:app --reload
+```
+
+Git Bash / cmd 下的等价写法：
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+source .venv/Scripts/activate                 # cmd：.venv\Scripts\activate.bat
 python -m pip install -r requirements-dev.txt
-mkdir -p data                                       # SQLite 文件目录
-alembic upgrade head                                # 初始化表结构
-APP_ADMIN_TOKEN=dev-token uvicorn app.main:app --reload
+mkdir -p data
+python -m alembic upgrade head
+APP_ADMIN_TOKEN=dev-token python -m uvicorn app.main:app --reload
 ```
 
-**前端**
+#### Linux
+
+```bash
+# 1) 后端（bash）
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+mkdir -p data                                 # SQLite 文件目录，必需
+python -m alembic upgrade head                # 初始化表结构
+APP_ADMIN_TOKEN=dev-token python -m uvicorn app.main:app --reload
+```
+
+> Debian/Ubuntu 若缺少 `python3-venv`：`sudo apt install python3.10-venv`。
+
+#### macOS
+
+与 Linux 完全一致（`bash` / `zsh` 均可）。若系统自带 Python 版本过低：
+
+```bash
+brew install python@3.10
+python3.10 -m venv .venv
+```
+
+Apple Silicon 无需额外配置，`lxml`、`psycopg2-binary` 等依赖均提供 arm64 wheel。
+
+#### 前端（Windows / Linux / macOS 命令一致）
 
 ```bash
 cd frontend
@@ -167,14 +249,25 @@ npm install
 npm run dev            # http://localhost:5173，/api 默认代理到 http://localhost:8000
 ```
 
-如需代理到其他后端地址：`VITE_API_PROXY_TARGET=http://localhost:9000 npm run dev`。
+> 仓库内 `frontend/.npmrc` 已将 registry 指向国内镜像；如需切换可自行修改或删除该文件。
+> 代理到其他后端地址：`VITE_API_PROXY_TARGET=http://localhost:9000 npm run dev`（PowerShell：`$env:VITE_API_PROXY_TARGET="http://localhost:9000"; npm run dev`）。
 
 ### 冒烟验证
+
+**Linux / macOS / Git Bash / WSL2：**
 
 ```bash
 curl http://localhost:8000/healthz
 curl http://localhost:8000/api/v1/articles
 curl -H "Authorization: Bearer dev-token" http://localhost:8000/api/v1/admin/insights
+```
+
+**Windows PowerShell**（`curl` 在 PowerShell 中是 `Invoke-WebRequest` 的别名，建议用 `Invoke-RestMethod` 或系统自带的 `curl.exe`）：
+
+```powershell
+Invoke-RestMethod http://localhost:8000/healthz
+Invoke-RestMethod http://localhost:8000/api/v1/articles
+Invoke-RestMethod -Headers @{ Authorization = "Bearer dev-token" } http://localhost:8000/api/v1/admin/insights
 ```
 
 ---
@@ -251,6 +344,10 @@ curl -H "Authorization: Bearer dev-token" http://localhost:8000/api/v1/admin/ins
 
 > 前端共三个页面：`/`（文章列表）、`/articles/:id`（文章详情）、`/admin`（维护者概览）。
 > 列表与详情为匿名访问；维护者接口与 `/admin` 需要管理令牌。
+>
+> **操作系统差异说明**：第一、二节是浏览器操作，与系统无关，Windows / Linux / macOS 完全相同；
+> 差异只出现在第三节及之后的**命令行与定时任务**上，因此这些小节按系统分别给出命令
+> （支持范围见 [支持的系统](#支持的系统)）。
 
 ### 一、访客：浏览文章
 
@@ -291,45 +388,135 @@ curl -H "Authorization: Bearer dev-token" http://localhost:8000/api/v1/admin/ins
 
 ### 三、维护者：配置第一个来源并看到内容（端到端上手）
 
-```bash
-export API=http://localhost:8000/api/v1
-export TOKEN=dev-token          # 与 APP_ADMIN_TOKEN 保持一致
+> 本节是命令行操作，因此按系统分别给出命令。为避免各系统引号/转义差异，
+> 建议先把请求体保存为 UTF-8 编码的 `source.json`，再用文件方式提交。
 
-# 1) 校验令牌可用
-curl -s -H "Authorization: Bearer $TOKEN" $API/admin/ping
+**第 1 步：准备 `source.json`（三系统一致）**
 
-# 2) 新建一个白名单来源（示例：某技术博客）
-curl -s -X POST $API/admin/sources \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{
-        "name": "示例技术博客",
-        "site_url": "https://blog.example.com/",
-        "list_type": "whitelist",
-        "focus_area_name": "后端与 AI",
-        "focus_area_description": "关注分布式系统与机器学习",
-        "keywords": ["架构", "机器学习"],
-        "example_urls": ["https://blog.example.com/posts/1"],
-        "weight": 5.0,
-        "update_frequency": "normal",
-        "exclude_keywords": ["招聘", "广告"]
-      }'
-
-# 3) 查看来源与建议频率档位
-curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/sources" | head -c 400
-curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/sources/frequency-tiers"
-
-# 4) 触发一次采集（当前调度入口为后端服务函数，尚未暴露 HTTP 接口）
-cd backend
-python -c "from app.db.session import get_session_factory; from app.services import scheduler_service; \
-s = get_session_factory()(); print(scheduler_service.run_scheduler_tick(s)); s.close()"
-
-# 5) 回到前端刷新列表，即可看到采集到的文章
+```json
+{
+  "name": "示例技术博客",
+  "site_url": "https://blog.example.com/",
+  "list_type": "whitelist",
+  "focus_area_name": "后端与 AI",
+  "focus_area_description": "关注分布式系统与机器学习",
+  "keywords": ["架构", "机器学习"],
+  "example_urls": ["https://blog.example.com/posts/1"],
+  "weight": 5.0,
+  "update_frequency": "normal",
+  "exclude_keywords": ["招聘", "广告"]
+}
 ```
 
-**周期性采集**：把第 4 步放进系统定时任务（cron / systemd timer / 容器 sidecar）即可按各来源配置的频率运行；
-调度器只会处理"启用中且非黑名单"的来源，且依赖去重幂等性，重复触发不会产生重复数据。
+**第 2 步：调用接口新建来源**
 
-### 四、维护者常见操作速查
+Linux / macOS / Git Bash / WSL2：
+
+```bash
+export API=http://localhost:8000/api/v1
+export TOKEN=dev-token                  # 与 APP_ADMIN_TOKEN 保持一致
+
+# 1) 校验令牌可用
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/ping"
+
+# 2) 新建白名单来源（请求体来自 source.json）
+curl -s -X POST "$API/admin/sources" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @source.json
+
+# 3) 查看来源与建议频率档位
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/sources"
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/sources/frequency-tiers"
+```
+
+Windows PowerShell：
+
+```powershell
+$API = "http://localhost:8000/api/v1"
+$TOKEN = "dev-token"
+$headers = @{ Authorization = "Bearer $TOKEN" }
+
+# 1) 校验令牌可用
+Invoke-RestMethod -Uri "$API/admin/ping" -Headers $headers
+
+# 2) 新建白名单来源（按字节读取并以 UTF-8 发送，避免中文乱码）
+$body = [System.IO.File]::ReadAllBytes("source.json")
+Invoke-RestMethod -Method Post -Uri "$API/admin/sources" -Headers $headers `
+  -ContentType "application/json" -Body $body
+
+# 3) 查看来源与建议频率档位
+Invoke-RestMethod -Uri "$API/admin/sources" -Headers $headers
+Invoke-RestMethod -Uri "$API/admin/sources/frequency-tiers" -Headers $headers
+```
+
+Windows cmd（使用系统自带 `curl.exe`，不要用 PowerShell 中的 `curl` 别名）：
+
+```bat
+curl.exe -s -X POST "http://localhost:8000/api/v1/admin/sources" ^
+  -H "Authorization: Bearer dev-token" -H "Content-Type: application/json" ^
+  --data-binary "@source.json"
+```
+
+**第 3 步：触发一次采集（三系统同一命令）**
+
+调度入口目前是后端服务函数（尚未暴露 HTTP 接口）。进入 `backend` 目录并激活虚拟环境后执行：
+
+```bash
+python -c "from app.db.session import get_session_factory as f; from app.services import scheduler_service as s; db = f()(); print(s.run_scheduler_tick(db)); db.close()"
+```
+
+> - Windows PowerShell / cmd、Linux、macOS 均可直接使用这一条命令（PowerShell 中保持双引号即可）；
+> - 该函数按"来源配置的频率是否到期"决定抓取对象，因此重复执行是安全的（幂等）。
+
+**第 4 步**：回到浏览器刷新列表，即可看到采集到的文章。
+
+### 四、维护者：周期性采集的定时任务（按系统）
+
+调度器自身会按各来源的频率判断是否到期，因此定时任务的间隔是"**检查频率**"而非"抓取频率"，
+建议 **每 30–60 分钟**触发一次即可。
+
+**Linux（cron / systemd timer）**
+
+```bash
+crontab -e
+```
+
+```cron
+*/30 * * * * cd /path/to/ai-blog-aggregator/backend && /path/to/ai-blog-aggregator/backend/.venv/bin/python -c "from app.db.session import get_session_factory as f; from app.services import scheduler_service as s; db = f()(); print(s.run_scheduler_tick(db)); db.close()" >> /var/log/aggregator-crawl.log 2>&1
+```
+
+如需更规范的服务管理，可改用 systemd timer（`OnUnitActiveSec=30min`）。
+
+**macOS（cron 或 launchd）**
+
+macOS 仍可使用与 Linux 相同的 `crontab -e`；更推荐用 launchd：
+新建 `~/Library/LaunchAgents/com.example.aggregator-crawl.plist`，在 `ProgramArguments` 中填入
+虚拟环境 Python 与上述 `-c` 脚本，并设置 `StartInterval` 为 `1800`，然后 `launchctl load` 该 plist。
+
+**Windows（任务计划程序 / schtasks）**
+
+1. 新建 `run_crawl.cmd`（把路径换成你的实际路径）：
+
+```bat
+@echo off
+cd /d C:\path\to\ai-blog-aggregator\backend
+rem 使用 PostgreSQL 时取消下一行注释并填入连接串
+rem set APP_DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/blog
+.venv\Scripts\python.exe -c "from app.db.session import get_session_factory as f; from app.services import scheduler_service as s; db = f()(); print(s.run_scheduler_tick(db)); db.close()"
+```
+
+2. 注册每 30 分钟执行一次的计划任务（PowerShell 或 cmd 均可）：
+
+```powershell
+schtasks /Create /SC MINUTE /MO 30 /TN "BlogAggregatorCrawl" /TR "C:\path\to\run_crawl.cmd"
+```
+
+3. 常用管理命令：立即执行一次 `schtasks /Run /TN "BlogAggregatorCrawl"`；删除 `schtasks /Delete /TN "BlogAggregatorCrawl" /F`。
+
+> 容器部署时：可在宿主用 cron 调用 `docker compose -f infra/docker-compose.yml exec api python -c "…"`，
+> 或增加一个只负责定时触发采集的 sidecar 容器。
+
+### 五、维护者常见操作速查
 
 | 我想…… | 去哪里做 |
 | --- | --- |
@@ -424,6 +611,8 @@ s = get_session_factory()(); print(scheduler_service.run_scheduler_tick(s)); s.c
 
 ## 测试与质量门槛
 
+**Windows / Linux / macOS 三系统命令一致**（需已激活后端虚拟环境）：
+
 ```bash
 # 后端：格式 + 静态检查 + 测试（含覆盖率，CI 门槛 85%）
 cd backend && black --check . && flake8 . && pytest
@@ -431,6 +620,11 @@ cd backend && black --check . && flake8 . && pytest
 # 前端：静态检查 + 格式 + 类型检查/构建 + 单测
 cd frontend && npm run lint && npm run format:check && npm run build && npm test
 ```
+
+> 说明：`&&` 串联在 Linux / macOS / Git Bash / PowerShell 7 / cmd 中均可用；
+> 若使用 **Windows PowerShell 5.1**（不支持 `&&`），请逐条执行：
+> `cd backend`、`black --check .`、`flake8 .`、`pytest`。
+
 
 当前状态：
 
@@ -450,6 +644,9 @@ cd frontend && npm run lint && npm run format:check && npm run build && npm test
 2. **Frontend**：`eslint` → `prettier --check` → `tsc + vite build` → `vitest`；
 3. **Infra**：`docker compose config -q` 校验编排文件。
 
+> CI 运行在 `ubuntu-latest`（Linux），因此 **Linux 是被持续验证的平台**；
+> Windows 由开发机人工验证，macOS 目前没有自动化验证（见[支持的系统](#支持的系统)）。
+
 ---
 
 ## 常见问题
@@ -468,6 +665,21 @@ A：先看 `/api/v1/admin/dedup/hits` 与 `/api/v1/admin/dedup/groups` 的判定
 
 **Q：`data/app.db` 或依赖目录被提交了吗？**
 A：没有。`.gitignore` 已排除 `data/`、`*.db`、`node_modules/`、`dist/`、`__pycache__/`、`.env` 等本地产物。
+
+**Q：项目支持哪些操作系统？macOS 能用吗？**
+A：**Windows 10/11 与 Linux 为已验证的正式支持平台**（Windows 为本仓库开发环境，Linux 由 CI 每次验证）；
+**macOS 预期可用但未经官方验证**；其他系统不支持。详见 [支持的系统](#支持的系统)。
+
+**Q：Windows 上执行 `alembic upgrade head` 会因编码报错吗？**
+A：不会。开发初期 `alembic.ini` 含中文注释，在 GBK 环境下 configparser 会抛 `UnicodeDecodeError`，
+现已改为纯 ASCII，Windows 可直接执行迁移。
+
+**Q：PowerShell 里 `curl` 报参数错误？**
+A：PowerShell 5.1 的 `curl` 是 `Invoke-WebRequest` 的别名，不支持 `-H`/`--data-binary` 等参数。
+请改用 `Invoke-RestMethod`（见[网站使用说明](#网站使用说明)）或系统自带的 `curl.exe`。
+
+**Q：需要 WSL 才能用吗？**
+A：不需要。Windows 上原生 PowerShell / cmd / Git Bash 均可运行；WSL2 也可，此时按 Linux 章节操作。
 
 ---
 
@@ -560,6 +772,7 @@ flowchart LR
 - 前端管理子页面（来源/类别/去重策略）为占位页，能力通过后端接口与 Swagger UI 使用；
 - 详情页尚未渲染"关联推荐"区块（`related_articles` 已由详情接口返回）；列表页也尚未提供来源/标签/日期筛选控件；
 - 分类基于关键词规则，未引入模型；阈值标定样本量有限，需在真实数据上持续校准；
+- 平台验证不完整：Windows（本机）与 Linux（CI）已验证，**macOS 未纳入 CI**，尚未实测；
 - 可观测性（Prometheus/Grafana 指标、抓取成功率告警）与部署运维文档仍待补充。
 
 ---
