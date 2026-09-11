@@ -1,0 +1,13 @@
+# 运行时依赖（版本锁定，遵循 constitution.md「依赖管理」）
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+alembic==1.19.2
+pydantic==2.12.4
+pydantic-settings==2.13.0
+httpx==0.28.1
+beautifulsoup4==4.14.3
+lxml==6.1.1
+python-dateutil==2.9.0.post0
+# PostgreSQL 驱动（生产环境；Docker Compose 使用）
+psycopg2-binary==2.9.10

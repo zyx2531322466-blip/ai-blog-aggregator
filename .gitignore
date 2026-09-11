@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Databases / local data
+backend/data/
+*.sqlite3
+*.db
+
+# Env
+.env
+.env.local
+infra/.env
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 本地备份/临时产物（不入库）
+spec备份/
