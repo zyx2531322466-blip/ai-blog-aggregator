@@ -1,0 +1,16 @@
+{{ subscription_email_masked }} 的订阅摘要（{{ period_label }}）
+
+{% if items %}本期共 {{ items|length }} 篇与你的订阅方向相关的新内容：
+
+{% for item in items %}{{ loop.index }}. {{ item.title }}
+   来源：{{ item.source_name }}　发布时间：{{ item.published_label }}
+   命中方向：{{ item.matched_topics|join('、') }}
+   摘要：{{ item.summary or '（暂无摘要）' }}
+   原文：{{ item.url }}
+{% if item.merged_sources_count > 1 %}   （该内容另有 {{ item.merged_sources_count - 1 }} 个来源转载）{{ "\n" }}{% endif %}
+{% endfor %}{% else %}本周期没有新的相关内容。{% endif %}
+
+——
+你收到这封邮件是因为你订阅了本站的内容方向：{{ topics|join('、') }}。
+不想再收到？点击退订：{{ unsubscribe_link }}
+{% if settings_note %}{{ settings_note }}{% endif %}

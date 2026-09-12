@@ -8,12 +8,14 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.crawler.fetcher import Fetcher
 from app.crawler.rate_limit import RateLimiter
 from app.crawler.robots import RobotsChecker
 from app.crawler.service import CrawlReport, crawl_source
 from app.db.models import Source
-from app.services import classifier_service, dedup_service
+from app.knowledge.llm_client import LlmClient
+from app.services import classifier_service, dedup_service, knowledge_dedup_service
 from app.services.article_service import parse_crawl_pages
 
 
@@ -28,6 +30,7 @@ class PipelineReport:
     classified: int = 0
     merged: int = 0
     related: int = 0
+    knowledge_filtered: int = 0
     error: str | None = None
 
 
@@ -41,8 +44,10 @@ def process_source(
     article_urls: list[str] | None = None,
     max_pages: int | None = None,
     now: datetime | None = None,
+    knowledge_client: LlmClient | None = None,
+    settings: Settings | None = None,
 ) -> PipelineReport:
-    """处理单个来源：抓取 → 解析/过滤 → 分类 → 去重。"""
+    """处理单个来源：抓取 → 解析/过滤 → 分类 → 文本级去重 → 知识级去重（T26）。"""
 
     crawl = crawl_source(
         session,
@@ -63,6 +68,7 @@ def process_source(
 
     merged = 0
     related = 0
+    deduped_articles = []
     for outcome in outcomes:
         if not outcome.parsed or outcome.filtered:
             continue
@@ -71,6 +77,16 @@ def process_source(
             merged += 1
         elif result.related_article is not None:
             related += 1
+        # 知识级去重只在文本级去重之后进行（避免对重复文本重复调用模型）
+        if result.primary_article is None:
+            deduped_articles.append(outcome.article)
+
+    knowledge_filtered = 0
+    if knowledge_client is not None and deduped_articles:
+        resolved = settings or get_settings()
+        knowledge_filtered = knowledge_dedup_service.pipeline_judge(
+            session, deduped_articles, client=knowledge_client, settings=resolved
+        )
 
     return PipelineReport(
         source_id=source.id,
@@ -80,4 +96,5 @@ def process_source(
         classified=len(classifications),
         merged=merged,
         related=related,
+        knowledge_filtered=knowledge_filtered,
     )

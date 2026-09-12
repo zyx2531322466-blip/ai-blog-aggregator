@@ -93,7 +93,10 @@ def test_threshold_change_records_history(db_session: Session) -> None:
 def test_rollback_restores_previous_value_and_records(db_session: Session) -> None:
     dedup_settings_service.set_near_duplicate_threshold(db_session, 0.8, actor="alice")
     dedup_settings_service.set_near_duplicate_threshold(db_session, 0.7, actor="bob")
-    second = dedup_settings_service.get_setting_history(db_session)[1]
+    # 按内容定位"第二次调整"：Windows 下同刻时间戳可能导致顺序不稳定
+    second = next(
+        row for row in dedup_settings_service.get_setting_history(db_session) if row.actor == "bob"
+    )
 
     restored = dedup_settings_service.rollback_setting(db_session, second.id, actor="carol")
 
@@ -102,9 +105,10 @@ def test_rollback_restores_previous_value_and_records(db_session: Session) -> No
 
     history = dedup_settings_service.get_setting_history(db_session)
     assert len(history) == 3
-    assert history[-1].old_value == "0.7"
-    assert history[-1].new_value == "0.8"
-    assert history[-1].actor == "carol"
+    rollback_rows = [row for row in history if row.actor == "carol"]
+    assert len(rollback_rows) == 1
+    assert rollback_rows[0].old_value == "0.7"
+    assert rollback_rows[0].new_value == "0.8"
 
 
 def test_rollback_unknown_history_is_rejected(db_session: Session) -> None:

@@ -11,8 +11,14 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
-from app.db.enums import ArticleStatus, CategoryStatus, DedupRelationType
+from app.db.enums import (
+    ArticleStatus,
+    CategoryStatus,
+    DedupRelationType,
+    KnowledgeStatus,
+)
 from app.db.models import Article, Category, DuplicateRelation, Source, Tag, article_tags
+from app.schemas.knowledge import ArticleKnowledgeRead, KnowledgePointVerdictRead
 from app.schemas.article import (
     ArticleDetail,
     ArticleListItem,
@@ -21,7 +27,7 @@ from app.schemas.article import (
     SourceDetail,
     SourceSummary,
 )
-from app.services import dedup_service
+from app.services import dedup_service, knowledge_dedup_service
 
 MERGE_TYPES = (DedupRelationType.EXACT_DUPLICATE, DedupRelationType.NEAR_DUPLICATE)
 
@@ -47,7 +53,13 @@ def list_articles(session: Session, filters: ArticleFilters) -> tuple[int, list[
     """
 
     statement = select(Article).where(
-        Article.status.notin_((ArticleStatus.FILTERED, ArticleStatus.ERROR))
+        Article.status.notin_(
+            (ArticleStatus.FILTERED, ArticleStatus.ERROR, ArticleStatus.KNOWLEDGE_DUPLICATE)
+        ),
+        or_(
+            Article.knowledge_status.is_(None),
+            Article.knowledge_status != KnowledgeStatus.COVERED,
+        ),
     )
 
     merged_member_ids = select(DuplicateRelation.article_id).where(
@@ -107,6 +119,12 @@ def build_list_item(session: Session, article: Article) -> ArticleListItem:
         if article.primary_category is not None
         else None
     )
+    decision = knowledge_dedup_service.latest_decision(session, article.id)
+    knowledge_points = [
+        str(point.get("name"))
+        for point in (decision.points if decision is not None else [])
+        if isinstance(point, dict) and point.get("name")
+    ]
     return ArticleListItem(
         id=article.id,
         title=article.title,
@@ -120,6 +138,8 @@ def build_list_item(session: Session, article: Article) -> ArticleListItem:
         sources_count=sources_count,
         merged_sources_count=max(0, sources_count - 1),
         status=article.status,
+        knowledge_status=article.knowledge_status,
+        knowledge_points=knowledge_points,
     )
 
 
@@ -171,6 +191,32 @@ def get_article_detail(session: Session, article_id: str) -> ArticleDetail:
             RelatedArticleRef(id=article.id, title=article.title, url=article.url)
             for article in related
         ],
+        knowledge=_knowledge_block(session, canonical),
+    )
+
+
+def _knowledge_block(session: Session, article: Article) -> ArticleKnowledgeRead | None:
+    """T26：详情页的知识判定信息（状态、知识点、判定理由）。"""
+
+    decision = knowledge_dedup_service.latest_decision(session, article.id)
+    if decision is None and article.knowledge_status is None:
+        return None
+    points = [
+        KnowledgePointVerdictRead(
+            name=str(point.get("name")),
+            summary=str(point.get("summary") or ""),
+            is_new=bool(point.get("is_new")),
+            similarity=float(point.get("similarity") or 0.0),
+            wiki_entry_id=point.get("wiki_entry_id"),
+            matched_entry_id=point.get("matched_entry_id"),
+        )
+        for point in (decision.points if decision is not None else [])
+        if isinstance(point, dict) and point.get("name")
+    ]
+    return ArticleKnowledgeRead(
+        status=article.knowledge_status or KnowledgeStatus.NEW,
+        points=points,
+        decision_reason=decision.rationale if decision is not None else None,
     )
 
 

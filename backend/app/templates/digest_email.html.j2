@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>订阅摘要</title>
+  </head>
+  <body style="margin:0;padding:24px;background:#f6f7f9;font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;">
+    <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;padding:24px;">
+      <h1 style="font-size:18px;margin:0 0 4px;">订阅摘要</h1>
+      <p style="margin:0 0 20px;color:#6b7280;font-size:13px;">
+        {{ subscription_email_masked }}　·　{{ period_label }}　·　本期 {{ items|length }} 篇
+      </p>
+
+      {% if items %}
+      <ol style="padding-left:20px;margin:0;">
+        {% for item in items %}
+        <li style="margin-bottom:20px;">
+          <a href="{{ item.url }}" style="font-size:16px;font-weight:600;color:#1d4ed8;text-decoration:none;">{{ item.title }}</a>
+          <p style="margin:6px 0;color:#6b7280;font-size:12px;">
+            {{ item.source_name }}　·　{{ item.published_label }}　·　命中方向：{{ item.matched_topics|join('、') }}
+            {% if item.merged_sources_count > 1 %}　·　另有 {{ item.merged_sources_count - 1 }} 个来源转载{% endif %}
+          </p>
+          <p style="margin:0;font-size:14px;line-height:1.6;">{{ item.summary or '（暂无摘要）' }}</p>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p style="font-size:14px;">本周期没有新的相关内容。</p>
+      {% endif %}
+
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px;" />
+      <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.7;">
+        你收到这封邮件是因为你订阅了本站的内容方向：{{ topics|join('、') }}。<br />
+        <a href="{{ unsubscribe_link }}" style="color:#1d4ed8;">一键退订</a>
+        {% if settings_note %}　·　{{ settings_note }}{% endif %}
+      </p>
+    </div>
+  </body>
+</html>

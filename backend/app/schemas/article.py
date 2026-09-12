@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.db.enums import ArticleStatus
+from app.db.enums import ArticleStatus, KnowledgeStatus
 
 
 class CategoryRef(BaseModel):
@@ -40,6 +40,9 @@ class ArticleListItem(BaseModel):
     sources_count: int
     merged_sources_count: int
     status: ArticleStatus
+    # T26：知识级状态与知识点（已覆盖的文章不会出现在公开列表中）
+    knowledge_status: Optional[KnowledgeStatus] = None
+    knowledge_points: list[str] = []
 
 
 class ArticleListResponse(BaseModel):
@@ -84,9 +87,16 @@ class ArticleDetail(BaseModel):
     sources: list[SourceDetail]
     status: ArticleStatus
     related_articles: list[RelatedArticleRef] = Field(default_factory=list)
+    # T26：知识判定明细（状态、知识点、判定理由）
+    knowledge: Optional["ArticleKnowledgeRead"] = None
 
 
 class ArticleReclassifyRequest(BaseModel):
     """维护者重新归类请求（T12）。"""
 
     category_id: str = Field(min_length=1)
+
+
+from app.schemas.knowledge import ArticleKnowledgeRead  # noqa: E402  （T26 知识字段）
+
+ArticleDetail.model_rebuild()

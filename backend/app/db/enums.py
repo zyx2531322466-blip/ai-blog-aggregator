@@ -15,6 +15,7 @@ class ArticleStatus(str, enum.Enum):
     UNCATEGORIZED = "uncategorized"  # 未分类（归属兜底类别）
     ERROR = "error"  # 异常（解析失败等）
     FILTERED = "filtered"  # 已过滤（低质量/不相关内容）
+    KNOWLEDGE_DUPLICATE = "knowledge_duplicate"  # 知识已覆盖（T26 归档，不进列表与推送）
 
 
 class CategoryStatus(str, enum.Enum):
@@ -70,3 +71,89 @@ class CrawlStatus(str, enum.Enum):
     FAILED = "failed"  # 抓取失败（网络/超时等）
     ROBOTS_DENIED = "robots_denied"  # 被目标站 robots.txt 拒绝
     SKIPPED = "skipped"  # 被跳过（如黑名单站点）
+
+
+# ---------------------------------------------------------------------------
+# v2 新增枚举（T22–T26）：订阅推送与知识级去重
+# ---------------------------------------------------------------------------
+
+
+class SubscriptionStatus(str, enum.Enum):
+    """匿名订阅状态（T22）：未确认前不产生任何推送。"""
+
+    PENDING_CONFIRMATION = "pending_confirmation"  # 待邮箱确认
+    CONFIRMED = "confirmed"  # 已确认，可被推送
+    UNSUBSCRIBED = "unsubscribed"  # 已退订
+
+
+class SubscriptionFrequency(str, enum.Enum):
+    """推送节奏（T22）。"""
+
+    DAILY = "daily"
+    WEEKLY = "weekly"
+
+
+class SubscriptionTopicType(str, enum.Enum):
+    """订阅方向维度（T22）。"""
+
+    CATEGORY = "category"
+    TAG = "tag"
+    SOURCE = "source"
+    KEYWORD = "keyword"
+
+
+class DigestStatus(str, enum.Enum):
+    """推送记录状态（T23）。"""
+
+    PENDING = "pending"  # 已生成未投递
+    SENT = "sent"  # 投递成功
+    FAILED = "failed"  # 投递失败（超过重试上限）
+    SKIPPED_EMPTY = "skipped_empty"  # 本期无新增，按配置跳过
+
+
+class KnowledgeStatus(str, enum.Enum):
+    """文章的知识级状态（T26）。"""
+
+    NEW = "new"  # 全新知识
+    PARTIAL = "partial"  # 部分新增（含已覆盖知识点 + 新增点）
+    COVERED = "covered"  # 知识已被覆盖（归档）
+    PENDING = "pending"  # 待判定（外部模型暂不可用）
+
+
+class KnowledgeDecisionType(str, enum.Enum):
+    """知识判定结论（T26）。"""
+
+    NEW = "new_knowledge"
+    PARTIAL = "partial"
+    COVERED = "covered"
+    PENDING = "pending"
+
+
+class WikiEntryStatus(str, enum.Enum):
+    """知识 Wiki 条目状态（T25）。"""
+
+    ACTIVE = "active"  # 参与覆盖判定
+    RETIRED = "retired"  # 已废止，不再作为覆盖依据
+    MERGED = "merged"  # 已合并到其他条目
+
+
+class WikiEntrySourceType(str, enum.Enum):
+    """Wiki 条目来源（T25）。"""
+
+    LLM = "llm"
+    HUMAN = "human"
+
+
+class DecisionActor(str, enum.Enum):
+    """判定执行者（T26）：人工结论优先于系统结论。"""
+
+    SYSTEM = "system"
+    HUMAN = "human"
+
+
+class ExtractionStatus(str, enum.Enum):
+    """知识点提炼状态（T25）：ok 表示可用于覆盖判定，其他状态会被后续轮次重试。"""
+
+    PENDING = "pending"  # 排队中（尚未调用）
+    OK = "ok"  # 提炼成功（结果已缓存）
+    FAILED = "failed"  # 调用失败（超时/限流/非法输出），留待重试

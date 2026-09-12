@@ -137,7 +137,7 @@ flowchart LR
 
 | 系统 | 支持状态 | 验证方式 | 说明 |
 | --- | --- | --- | --- |
-| **Windows 10 / 11** | ✅ 已支持（已验证） | 本仓库开发环境为 Windows 11，后端 207 个测试、black/flake8、前端 lint/build/test 均在本机通过 | PowerShell 7、Git Bash、WSL2 三种终端均可；容器方式需 Docker Desktop |
+| **Windows 10 / 11** | ✅ 已支持（已验证） | 本仓库开发环境为 Windows 11，后端 301 个测试、black/flake8、前端 lint/build/test 均在本机通过 | PowerShell 7、Git Bash、WSL2 三种终端均可；容器方式需 Docker Desktop |
 | **Linux（x86_64）** | ✅ 已支持（已验证） | CI 每次 push 在 `ubuntu-latest` 上执行全部质量门（后端测试 + 覆盖率、前端 lint/build/test、compose 校验） | 建议 Python 3.10+；容器方式需 Docker Engine + `docker compose` 插件 |
 | **macOS（Intel / Apple Silicon）** | ⚠️ 预期可用，**未验证** | 未纳入 CI，无实测记录 | 代码无平台相关分支（不使用 `fcntl` / `os.name` / `subprocess` 等），依赖无平台条件标记，理论上可直接运行；若遇到问题欢迎提 issue |
 | 其他系统（FreeBSD、32 位平台等） | ❌ 不支持 | — | 未验证，也未提供安装说明 |
@@ -315,6 +315,16 @@ Invoke-RestMethod -Headers @{ Authorization = "Bearer dev-token" } http://localh
 | `GET` | `/api/v1/articles/{id}` | 文章详情：合并组全部来源、关联推荐、发布时间与采集时间 |
 | `GET` | `/api/v1/categories` | 启用中的受控类别及文章数 |
 | `GET` | `/api/v1/sources` | 来源维度新鲜度（最后成功更新时间 / 最后抓取时间） |
+
+### 公开接口（v2 新增）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/subscription-topics` | 可订阅方向清单（类别/标签/来源 + 节奏） |
+| POST | `/api/v1/subscriptions` | 创建订阅（返回"待确认"，同时发送确认邮件） |
+| GET | `/api/v1/subscriptions/confirm?token=` | 邮箱双确认（凭证一次性） |
+| POST | `/api/v1/subscriptions/unsubscribe` | 一键退订（`self` / `all`） |
+| GET / DELETE | `/api/v1/subscriptions/me` | 凭凭证自助查询 / 删除订阅数据 |
 
 ### 维护者接口（`Authorization: Bearer <APP_ADMIN_TOKEN>`）
 
@@ -543,6 +553,52 @@ schtasks /Create /SC MINUTE /MO 30 /TN "BlogAggregatorCrawl" /TR "C:\path\to\run
 
 ---
 
+## v2 能力（订阅推送 + LLM Wiki 知识级去重）
+
+> 需求见 [`spec.md`](spec.md) 用户故事 10–16；方案见 [`plan.md`](plan.md)；票据见 [`tickets.md`](tickets.md) 的 T22–T27。
+
+### 订阅与定期邮件推送
+
+- **匿名订阅**：只需邮箱、无需注册；提交后必须点击邮件中的确认链接（双确认）才生效——
+  未确认状态**不会**收到任何推送；
+- **订阅方向**：类别 / 标签 / 来源 / 关键词四类可多选；可选每日或每周节奏，并设置单封邮件条数上限；
+- **摘要内容**：只包含"命中订阅方向 + 非合并成员 + 非知识重复 + 尚未推送过"的文章，并注明命中原因；
+- **幂等**：以"周期桶"为唯一键，任务重跑不会重复发信；同一篇文章对同一订阅者永不重复推送；
+- **退订**：每封邮件都带一键退订链接，可只退当前订阅或退订该邮箱全部订阅，立即生效；
+- **可运维**：维护者可查看订阅列表（邮箱脱敏）、投递记录与明细、手动触发（含"只生成不投递"预演）、
+  调整节奏/时间窗/上限/重试，查看送达健康与发信合规自检（SPF/DKIM/DMARC 清单）；失败率超阈值自动暂停推送。
+
+```bash
+# 本地完整验证（不会真实发信：APP_MAIL_ENABLED=false 时只记录不投递）
+curl -s -X POST http://localhost:8000/api/v1/subscriptions -H 'Content-Type: application/json' \
+  -d '{"email":"reader@example.com","topics":[{"type":"category","value":"AI/机器学习"}],"frequency":"weekly"}'
+# 维护者手动预演一轮推送
+curl -s -X POST http://localhost:8000/api/v1/admin/digests/run -H "Authorization: Bearer $APP_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"dry_run":true}'
+```
+
+### LLM Wiki 与知识级去重
+
+三层去重：**完全重复**（SHA-256）→ **近重复**（SimHash）→ **知识级**（LLM + 知识 Wiki）。
+
+- 系统用外部 LLM 把文章提炼为若干"知识点"，与知识 Wiki 的活跃条目做向量/文本相似度比对；
+- 判定为**知识已覆盖**的文章被归档（不出现在列表、不进入推送）；
+- **保守优先**：相似度未达高阈值、二次判定不确定、模型不可用时，一律判为"全新知识"或"待判定"，
+  **绝不**因为不确定而把内容藏起来（知识级误筛的代价远高于漏筛）；
+- **人工优先**：维护者可新增/编辑/废止/合并 Wiki 条目，也可把文章改判为"不是知识重复"，改判立即生效；
+- **可追溯**：每次判定都记录命中条目、相似度、判定理由、模型名与提示词版本；
+- **可开关**：`APP_KNOWLEDGE_ENABLED` 默认关闭；关闭时该层不做任何判定。
+
+### 维护者操作（v2）
+
+```bash
+# 查看待判定文章并触发一轮知识判定
+curl -s -X POST http://localhost:8000/api/v1/admin/knowledge/run -H "Authorization: Bearer $APP_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"limit":20}'
+# 查看误筛统计与模型用量
+curl -s http://localhost:8000/api/v1/admin/knowledge-stats -H "Authorization: Bearer $APP_ADMIN_TOKEN"
+```
+
 ## 核心规则说明
 
 ### 内容质量过滤（`app/filtering`）
@@ -601,6 +657,21 @@ schtasks /Create /SC MINUTE /MO 30 /TN "BlogAggregatorCrawl" /TR "C:\path\to\run
 
 ---
 
+### 维护者接口（v2 新增）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/admin/subscriptions` | 订阅列表（邮箱脱敏，可按状态/节奏筛选） |
+| GET | `/api/v1/admin/digests` · `/api/v1/admin/digests/{id}` | 投递记录与条目明细（含命中方向） |
+| POST | `/api/v1/admin/digests/run` | 手动触发（支持 `dry_run` 预演与单订阅重跑，仍保证不重复发送） |
+| GET / PATCH | `/api/v1/admin/notification-settings` | 推送设置（节奏/时间窗/上限/重试/暂停），含变更历史 |
+| GET | `/api/v1/admin/delivery-health` | 送达健康与发信合规自检 |
+| GET | `/api/v1/admin/wiki/entries` · POST · PATCH · retire · merge | 知识 Wiki 条目维护 |
+| POST | `/api/v1/admin/knowledge/extract/{article_id}` | 单篇知识点提炼（带缓存，可 `force`） |
+| GET | `/api/v1/admin/knowledge-decisions` | 判定记录（含依据、相似度、模型与提示词版本） |
+| POST | `/api/v1/admin/articles/{article_id}/knowledge-override` | 人工改判（人工结论优先） |
+| POST | `/api/v1/admin/knowledge/run` · GET `/api/v1/admin/knowledge-stats` | 手动判定一轮 / 误筛统计与用量 |
+
 ## 数据模型
 
 核心表（`backend/app/db/models.py`，迁移见 `backend/alembic/versions/`）：
@@ -638,7 +709,7 @@ cd frontend && npm run lint && npm run format:check && npm run build && npm test
 
 当前状态：
 
-- 后端 **207** 个测试全部通过，`app` 覆盖率 **≈95%**（`pytest --cov-fail-under=85`）；
+- 后端 **301** 个测试全部通过，`app` 覆盖率 **≈95%**（`pytest --cov-fail-under=85`）；
 - 前端 **19** 个测试全部通过，eslint / prettier / `tsc --noEmit` 均无告警；
 - 爬虫与解析测试全部使用 `backend/tests/fixtures/*.html` 录制样本，**不访问真实网络**；
 - `tests/test_e2e.py` 覆盖七类端到端场景：正常采集展示、完全重复合并、近重复合并、不同视角关联、
@@ -774,7 +845,7 @@ flowchart LR
 
 | 维度 | 结果 |
 | --- | --- |
-| 后端测试 | 207 个用例通过，`app` 覆盖率 ≈95%（CI 门槛 85%） |
+| 后端测试 | 301 个用例通过，`app` 覆盖率 ≈95%（CI 门槛 85%） |
 | 前端测试 | 19 个用例通过，eslint / prettier / `tsc` 无告警 |
 | 端到端 | `tests/test_e2e.py` 覆盖 7 类场景 + 用户故事核心路径 |
 | CI | Backend / Frontend / Infra 三作业，push 与 PR 均自动执行 |

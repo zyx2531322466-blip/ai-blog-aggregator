@@ -169,3 +169,70 @@ cd backend  && black --check . && flake8 . && pytest --cov-fail-under=85
 cd frontend && npm run lint && npm run format:check && npm run build && npm test
 cd ..       && docker compose -f infra/docker-compose.yml config -q
 ```
+
+---
+
+# v2 收敛报告（订阅推送 + LLM Wiki 知识级去重）
+
+> **主题**：`spec.md` v2（用户故事 10–16）↔ `plan.md`/`tasks.md` v2 ↔ 实现 ↔ 验证
+> **基线**：`main @ T22–T27 实现提交`　**结论**：**T22–T27 全部收敛**；偏差 6 项已关闭；未收敛项 5 项均为环境限制或明确范围外。
+
+## v2-1. 逐票收敛对照
+
+| 票 | 交付物 | 验收证据（测试文件 / 用例数） | 状态 |
+| --- | --- | --- | --- |
+| T22 | 订阅生命周期与反滥用（匿名订阅、双确认、退订、自助删除、频控） | `test_subscriptions.py` (12) | ✅ 收敛 |
+| T23 | 摘要生成与邮件投递（方向匹配、条目组装、双版本模板、幂等、重试） | `test_digests.py` (20) | ✅ 收敛 |
+| T24 | 推送调度、维护者管理与送达合规（时间窗、暂停、预演、自检） | `test_notification_admin.py` (21) | ✅ 收敛 |
+| T25 | 知识点提炼与 Wiki 数据层（LLM 客户端、缓存、向量检索、条目维护） | `test_wiki.py` (20) | ✅ 收敛 |
+| T26 | 知识匹配判定与文章处置（三态、保守兜底、留痕、改判、列表/推送联动） | `test_knowledge_dedup.py` (24) | ✅ 收敛 |
+| T27 | 订阅与知识复核前端（订阅页、确认/退订页、维护者页面、数据边界披露） | 前端 3 个测试文件 (19)，合计 **38 前端用例** | ✅ 收敛 |
+
+## v2-2. 需求覆盖矩阵（spec v2 用户故事）
+
+| 用户故事 | 落地票 | 实现定位 | 验证证据 |
+| --- | --- | --- | --- |
+| 10 订阅感兴趣的方向 | T22 T27 | `subscription_service.py`、`SubscribePage.tsx` | `test_subscriptions`、`SubscribePage.test.tsx` |
+| 11 定期收到摘要邮件 | T23 T24 | `digest_service.py`、`digest_scheduler_service.py`、模板 | `test_digests`、`test_notification_admin` |
+| 12 本人确认与一键退订 | T22 T27 | 双确认/退订凭证（哈希 + 一次性/轮换）、退订页 | `test_subscriptions`、`SubscriptionPages.test.tsx` |
+| 13 维护者控制节奏与送达可视 | T24 T27 | `notification_settings_service.py`、投递记录/自检接口 | `test_notification_admin`、`AdminKnowledgePages.test.tsx` |
+| 14 知识级重复被筛掉 | T25 T26 | `knowledge_service.py`、`knowledge_dedup_service.py` | `test_wiki`、`test_knowledge_dedup` |
+| 15 可编辑的知识 Wiki + 人工修正 | T25 T26 T27 | `wiki_service.py`、改判接口、`AdminWikiPage.tsx` | `test_wiki`、`test_knowledge_dedup` |
+| 16 误筛可复核 | T26 T27 | `knowledge_decisions` 留痕 + `knowledge-stats` | `test_knowledge_dedup`、`AdminKnowledgePages.test.tsx` |
+
+## v2-3. 质量度量
+
+| 指标 | 数值 | 门槛 | 结果 |
+| --- | --- | --- | --- |
+| 后端用例 | **301 passed**（v2 新增 94 个） | 全绿 | ✅ |
+| 后端覆盖率（`app`） | **94%** | CI `--cov-fail-under=85` | ✅ |
+| 前端用例 | **38 passed / 9 文件**（v2 新增 19 个 / 3 文件） | 全绿 | ✅ |
+| 前端质量门 | eslint（0 warning）、prettier check、`tsc --noEmit`、vite build | 通过 | ✅ |
+| 数据迁移 | 1 个 v2 迁移（10 张新表 + `articles.knowledge_status`），已通过升级/降级往返 | — | ✅ |
+| 新增 HTTP 端点 | 公开 6 + 维护者 15 | — | — |
+
+核心模块覆盖率：`subscription_service` 96%、`digest_service` 97%、`digest_scheduler_service` 93%、
+`knowledge_service` 90%、`wiki_service` 95%、`notification_settings_service` 88%。
+
+## v2-4. 偏差登记与关闭
+
+| 编号 | 类型 | 现象 | 处理与结论 |
+| --- | --- | --- | --- |
+| D-12 | A | `plan.md` 计划用 **pgvector** 做向量检索，但引入数据库扩展与新增依赖 | 改为**可移植方案**：向量以 JSON 存储 + 应用层余弦相似度，SQLite/PostgreSQL 行为一致，并保留 `VectorIndex` 抽象以便后续替换；已在 `app/knowledge/vector.py` 与本节登记 |
+| D-13 | B | T22「不包含邮件投递」与"双确认必须发确认邮件"冲突 | 澄清边界：`MailSender` 抽象与**确认邮件**属 T22 基础设施；摘要邮件模板属 T23；两票共用同一发送抽象 |
+| D-14 | B | 摘要邮件 HTML 与纯文本对"转载来源"措辞不一致（"来源转载"/"来源在转载"） | 统一为同一措辞，测试断言与模板对齐（同一行为两种呈现必须一致） |
+| D-15 | B | 退订链接需明文凭证，但设计上只存哈希 | 设计取舍：**退订凭证随每封邮件轮换**并只存哈希——邮件里始终有最新可用链接，数据库永不保存明文凭证；已在服务与测试中固定该语义 |
+| D-16 | A | 既有守卫测试"数据库不得含 email 等账户字段"与匿名订阅冲突 | 更新守卫：仍禁止账号/密码/会话类字段，仅对 `subscriptions.email` 开白名单，并注明"匿名订阅不是账号体系" |
+| D-17 | C | 既有 `test_rollback_restores_previous_value_and_records` 依赖历史记录顺序，在 Windows 同刻时间戳下偶发失败 | 改为按内容（actor/value）定位记录，消除位置依赖；连续运行验证稳定 |
+| D-18 | C | 知识判定失败重试时重新收集条目，会把自己已入库的条目当成"已推送"而漏发 | 重试改为复用该推送记录已落库的条目，并补回归用例 |
+
+## v2-5. 未收敛项（v2）
+
+| 编号 | 事项 | 分类 | 影响 | 建议动作 |
+| --- | --- | --- | --- | --- |
+| O-09 | 未与真实 SMTP 服务联调（本地无邮件服务） | 环境限制 | 投递路径仅由替身与记录型实现验证 | 配置真实邮箱后跑一次灰度（T24 已提供预演与自检） |
+| O-10 | 未调用真实 LLM（无 API 密钥） | 环境限制 | 提炼/判定质量未在真实模型上评估 | 填入 `APP_LLM_API_KEY` 后开启 `APP_KNOWLEDGE_ENABLED` 并抽样评估误筛率 |
+| O-11 | 未启用 pgvector 索引 | 方案调整（见 D-12） | 向量检索为应用层计算，条目量级大时性能会下降 | 数据量增长后替换 `VectorIndex` 实现 |
+| O-12 | 退信/投诉处理依赖外部接入 | 范围外 | 当前只能基于"发送失败率"自动暂停 | 接入邮件服务商的退信 webhook 或 IMAP 回读 |
+| O-13 | 关键词订阅为归一化包含匹配（非语义订阅） | 范围外 | 同义表达可能漏订阅 | 后续可复用知识层的向量检索做语义订阅 |
+| O-14 | 本次未在容器 / PostgreSQL 上复跑（本机 Docker 守护进程未运行） | 环境限制 | 迁移与容器启动仅由 SQLite 往返测试 + CI 的  覆盖 | 启动 Docker 后执行 （容器启动会自动执行迁移） |

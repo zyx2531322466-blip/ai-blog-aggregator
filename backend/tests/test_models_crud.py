@@ -266,13 +266,17 @@ def test_schema_contains_no_user_account_fields(engine) -> None:
     tables = set(inspector.get_table_names())
     assert tables.isdisjoint(forbidden_table_names)
 
-    forbidden_column_hints = ("password", "passwd", "username", "email", "login", "credential")
+    forbidden_column_hints = ("password", "passwd", "username", "login", "credential")
     for table in tables:
         for column in inspector.get_columns(table):
             name = column["name"].lower()
             assert not any(
                 hint in name for hint in forbidden_column_hints
             ), f"{table}.{name} 疑似用户账户字段"
+            # v2（T22）允许"匿名订阅"保存邮箱作为触达地址：它不是账号——
+            # 没有注册/登录/密码/会话，身份仅由邮箱与一次性凭证表示。
+            if "email" in name:
+                assert table == "subscriptions", f"{table}.{name} 疑似用户账户字段"
 
 
 def test_expected_tables_exist(engine) -> None:

@@ -17,6 +17,8 @@ const ADMIN_ENTRIES = [
   { to: '/admin/sources', label: '来源配置' },
   { to: '/admin/categories', label: '类别管理' },
   { to: '/admin/dedup', label: '去重策略管理' },
+  { to: '/admin/notifications', label: '订阅与推送管理' },
+  { to: '/admin/wiki', label: '知识 Wiki 与判定复核' },
 ]
 
 /** 维护者效果概览页（T20）：展示统计并提供各管理入口。 */
